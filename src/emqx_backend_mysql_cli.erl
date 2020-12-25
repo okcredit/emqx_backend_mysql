@@ -222,16 +222,33 @@ message_acked(Pool, Msg) ->
 	end.
 
 custom_message_acked(Pool, Msg) ->
-	ParamsKey = [<<"${clientid}">>, <<"${topic}">>,
-		<<"${msgid}">>],
 	io:format("Message to process the query with: ~p~n", [Msg]),
-	case mysql_execute(Pool, message_acked_custom_query,
-		feed_var(ParamsKey, Msg))
+
+	case mysql_execute(Pool, message_get_query, feed_var([<<"${topic}">>,<<"${msgid}">>], Msg))
 	of
-		ok -> ok;
+		{ok, _Cols, []} -> [];
 		{error, Error} ->
-			logger:error("Failed to ack message: ~p", [Error])
+			logger:error("Lookup retain error: ~p", [Error]), [];
+		{ok, _Cols, [[SenderId]]} ->
+			io:format("Cols of message_get_query: ~p~n", [_Cols]),
+			io:format("clientId of the guy who sent msg: ~p~n", [SenderId]),
+			io:format("CliendId of the guy acking the message: ~p~n", [proplists:get_value(clientid, Msg, null)]),
+			case proplists:get_value(clientid, Msg, null) of
+				SenderId ->
+					io:format("Publisher just acked the message"),
+					{ok};
+				_ ->
+					io:format("Some Subscriber just acked the message"),
+					ParamsKey = [<<"${topic}">>, <<"${msgid}">>],
+					case mysql_execute(Pool, message_acked_custom_query, feed_var(ParamsKey, Msg))
+					of
+						ok -> ok;
+						{error, Error} ->
+							logger:error("Failed to ack message: ~p", [Error])
+					end
+			end
 	end.
+
 
 run_mysql_sql(Pool, Msg, SqlList) ->
 	lists:foreach(fun({Sql, ParamsKey}) ->
@@ -388,7 +405,9 @@ connect(Options) ->
 			"mid) values(?, ?, ?)  on duplicate key "
 			"update mid = ?">>},
 		{message_acked_custom_query,
-			<<"delete from mqtt_msg where sender = ? and topic = ? and msgid = ?">>}],
+			<<"delete from mqtt_msg where topic = ? and msgid = ?">>},
+		{message_get_query,
+			<<"select sender from mqtt_msg where topic = ? and msgid = ?">>}],
 	InitFun = fun() ->
 		{ok, Conn} = mysql:start_link([{prepare, Prepares}
 			| Options]),
