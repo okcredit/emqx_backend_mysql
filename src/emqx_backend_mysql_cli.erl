@@ -221,31 +221,53 @@ message_acked(Pool, Msg) ->
 			logger:error("Failed to ack message: ~p", [Error])
 	end.
 
+topicbasedFiltering(Pool, Msg, MsgAckingClientId) ->
+	Topic = proplists:get_value(topic, Msg, null),
+	io:format("Some Subscriber just acked the message from topic: ~p~n",[Topic]),
+	ClientTopic = list_to_atom(binary_to_list(<< <<"client/">>/binary, MsgAckingClientId/binary >>)),
+	MerchantTopic = list_to_atom(binary_to_list(<< <<"merchant/">>/binary, MsgAckingClientId/binary >>)),
+	BroadCastTopic = list_to_atom(binary_to_list(<<"broadcast/okCredit">>)),
+	io:format("CT: ~p~n",[ClientTopic]),
+	io:format("MT: ~p~n",[MerchantTopic]),
+	io:format("BT: ~p~n",[BroadCastTopic]),
+	case list_to_atom(binary_to_list(Topic)) of
+		ClientTopic ->
+			io:format("Topic from which message is acked: ~p~n", [ClientTopic]),
+			ParamsKey = [<<"${topic}">>, <<"${msgid}">>],
+			case mysql_execute(Pool, message_acked_custom_query, feed_var(ParamsKey, Msg))
+			of
+				ok -> ok;
+				{error, Error} ->
+					logger:error("Failed to ack message: ~p", [Error])
+			end;
+		MerchantTopic ->
+			io:format("Topic from which message is acked: ~p~n", [MerchantTopic]),
+			ok;
+		BroadCastTopic ->
+			io:format("Topic from which message is acked: ~p~n", [BroadCastTopic]),
+			ok;
+		_ ->
+			io:format("Topic from which message is acked: ~p~n", [Topic]),
+			{ok}
+	end.
+
 custom_message_acked(Pool, Msg) ->
 	io:format("Message to process the query with: ~p~n", [Msg]),
-
-	case mysql_execute(Pool, message_get_query, feed_var([<<"${topic}">>,<<"${msgid}">>], Msg))
-	of
+	case mysql_execute(Pool, message_get_sender_id_query, feed_var([<<"${topic}">>,<<"${msgid}">>], Msg)) of
 		{ok, _Cols, []} -> [];
 		{error, Error} ->
 			logger:error("Lookup retain error: ~p", [Error]), [];
-		{ok, _Cols, [[SenderId]]} ->
+		{ok, _Cols, [[PublisherClientId]]} ->
 			io:format("Cols of message_get_query: ~p~n", [_Cols]),
-			io:format("clientId of the guy who sent msg: ~p~n", [SenderId]),
+			io:format("ClientId of the guy who sent msg: ~p~n", [PublisherClientId]),
 			io:format("CliendId of the guy acking the message: ~p~n", [proplists:get_value(clientid, Msg, null)]),
-			case proplists:get_value(clientid, Msg, null) of
-				SenderId ->
-					io:format("Publisher just acked the message"),
+			MsgAckingClientId = proplists:get_value(clientid, Msg, null),
+			case MsgAckingClientId of
+				PublisherClientId ->
+					io:format("Publisher just acked the message~n"),
 					{ok};
 				_ ->
-					io:format("Some Subscriber just acked the message"),
-					ParamsKey = [<<"${topic}">>, <<"${msgid}">>],
-					case mysql_execute(Pool, message_acked_custom_query, feed_var(ParamsKey, Msg))
-					of
-						ok -> ok;
-						{error, Error} ->
-							logger:error("Failed to ack message: ~p", [Error])
-					end
+					topicbasedFiltering(Pool, Msg, MsgAckingClientId)
 			end
 	end.
 
@@ -406,7 +428,7 @@ connect(Options) ->
 			"update mid = ?">>},
 		{message_acked_custom_query,
 			<<"delete from mqtt_msg where topic = ? and msgid = ?">>},
-		{message_get_query,
+		{message_get_sender_id_query,
 			<<"select sender from mqtt_msg where topic = ? and msgid = ?">>}],
 	InitFun = fun() ->
 		{ok, Conn} = mysql:start_link([{prepare, Prepares}
