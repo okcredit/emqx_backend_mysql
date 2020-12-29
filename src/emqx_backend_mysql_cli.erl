@@ -257,8 +257,9 @@ custom_message_acked(Pool, Msg) ->
 		{ok, _Cols, []} -> [];
 		{error, Error} ->
 			logger:error("Lookup retain error: ~p", [Error]), [];
-		{ok, _Cols, [[PublisherClientId]]} ->
+		{ok, _Cols, [[MId,PublisherClientId]]} ->
 			io:format("Cols of message_get_query: ~p~n", [_Cols]),
+			io:format("MysqlId msg: ~p~n", [MId]),
 			io:format("ClientId of the guy who sent msg: ~p~n", [PublisherClientId]),
 			io:format("CliendId of the guy acking the message: ~p~n", [proplists:get_value(clientid, Msg, null)]),
 			MsgAckingClientId = proplists:get_value(clientid, Msg, null),
@@ -267,6 +268,7 @@ custom_message_acked(Pool, Msg) ->
 					io:format("Publisher just acked the message~n"),
 					{ok};
 				_ ->
+					message_acked(Pool, [{mysql_id, MId}|Msg]),
 					topicbasedFiltering(Pool, Msg, MsgAckingClientId)
 			end
 	end.
@@ -429,7 +431,7 @@ connect(Options) ->
 		{message_acked_custom_query,
 			<<"delete from mqtt_msg where topic = ? and msgid = ?">>},
 		{message_get_sender_id_query,
-			<<"select sender from mqtt_msg where topic = ? and msgid = ?">>}],
+			<<"select id, sender from mqtt_msg where topic = ? and msgid = ?">>}],
 	InitFun = fun() ->
 		{ok, Conn} = mysql:start_link([{prepare, Prepares}
 			| Options]),
