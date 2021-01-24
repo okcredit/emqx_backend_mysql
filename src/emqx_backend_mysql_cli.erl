@@ -262,13 +262,13 @@ custom_message_acked(Pool, Msg) ->
 			io:format("MysqlId msg: ~p~n", [MId]),
 			io:format("ClientId of the guy who sent msg: ~p~n", [PublisherClientId]),
 			io:format("CliendId of the guy acking the message: ~p~n", [proplists:get_value(clientid, Msg, null)]),
-			message_acked(Pool, [{mysql_id, MId}|Msg]),
 			MsgAckingClientId = proplists:get_value(clientid, Msg, null),
 			case MsgAckingClientId of
 				PublisherClientId ->
 					io:format("Publisher just acked the message~n"),
 					{ok};
 				_ ->
+					message_acked(Pool, [{mysql_id, MId}|Msg]),
 					topicbasedFiltering(Pool, Msg, MsgAckingClientId)
 			end
 	end.
